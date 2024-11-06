@@ -15,6 +15,7 @@ function App() {
 
   return (
     <div>
+      <h1>DXF VIEWER</h1>
       <input
         type="file"
         accept=".dxf"
