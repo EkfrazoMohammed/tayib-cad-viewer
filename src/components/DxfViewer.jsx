@@ -129,8 +129,8 @@ const DxfViewer = ({ dxfUrl, fonts = [], onLoaded }) => {
   };
 
   return (
-    <div>
-      <div className="canvasContainer" ref={canvasContainerRef}>
+    <div style={{display:"flex",gap:"2rem"}}>
+      <div className="canvasContainer" ref={canvasContainerRef} style={{position:"fixed",top:0,left:0}}>
         {isLoading && <div className="loading">Loading...</div>}
         {progress !== null && (
           <div className="progress">
