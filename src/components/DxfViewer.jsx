@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import * as THREE from "three";
 import { DxfViewer as DXFViewer } from "dxf-viewer";
 import LayersList from "./LayersList";
+import { getByACI } from "./color"; // ACI map util
 
 const DxfViewer = ({ dxfUrl, fonts = [], onLoaded }) => {
   const canvasContainerRef = useRef(null);
@@ -12,54 +13,72 @@ const DxfViewer = ({ dxfUrl, fonts = [], onLoaded }) => {
   const [layers, setLayers] = useState([]);
   const dxfViewer = useRef(null);
 
-  // Initialize the DXF Viewer and handle cleanup
   useEffect(() => {
-    if (canvasContainerRef.current) {
-      // Initialize the DXF viewer only once if it's not already initialized
-      if (!dxfViewer.current) {
-        dxfViewer.current = new DXFViewer(canvasContainerRef.current, {
-          clearColor: new THREE.Color("#fff"),
-          autoResize: true,
-          colorCorrection: true,
-          sceneOptions: {
-            wireframeMesh: true,
-          },
+    if (canvasContainerRef.current && !dxfViewer.current) {
+      dxfViewer.current = new DXFViewer(canvasContainerRef.current, {
+        clearColor: new THREE.Color("#fff"),
+        autoResize: true,
+        colorCorrection: true,
+        sceneOptions: {
+          wireframeMesh: true,
+        },
+      });
+
+      const subscribe = (eventName) => {
+        dxfViewer.current.Subscribe(eventName, (e) => {
+          console.log(`Event: ${eventName}`, e);
+          if (eventName === "loaded") {
+            const viewer = dxfViewer.current;
+            const loadedLayers = viewer.GetLayers();
+
+            loadedLayers.forEach((layer) => {
+              layer.isVisible = true;
+
+              let hexColor = "#FFFFFF";
+
+              try {
+                if (typeof layer.trueColor === "number") {
+                  const val = layer.trueColor;
+                  const r = (val >> 16) & 0xff;
+                  const g = (val >> 8) & 0xff;
+                  const b = val & 0xff;
+                  hexColor = `rgb(${r}, ${g}, ${b})`;
+                } else if (typeof layer.colorIndex === "number") {
+                  const aciColor = getByACI(layer.colorIndex);
+                  if (aciColor?.rgb) hexColor = aciColor.rgb;
+                }
+              } catch (err) {
+                console.warn(`Failed to compute color for layer ${layer.name}`, err);
+              }
+
+              layer.rgbColor = hexColor;
+
+              try {
+                viewer.SetLayerColor?.(layer.name, hexColor);
+              } catch (err) {
+                console.warn(`SetLayerColor error for ${layer.name}`, err);
+              }
+            });
+
+            setLayers(loadedLayers);
+            if (onLoaded) onLoaded(viewer);
+          }
         });
+      };
 
-        // Subscribe to events for DXFViewer
-        const subscribe = (eventName) => {
-          dxfViewer.current.Subscribe(eventName, (e) => {
-            console.log(`Event: ${eventName}`, e);
-            if (eventName === "loaded") {
-              // Trigger the onLoaded callback once the viewer is loaded
-              if (onLoaded) onLoaded(dxfViewer.current);
-              // Get and set the layers when the DXF is loaded
-              const viewer = dxfViewer.current;
-              const loadedLayers = viewer.GetLayers();
-              setLayers(loadedLayers);
-              loadedLayers.forEach((layer) => {
-                layer.isVisible = true; // Set default visibility to true
-              });
-            }
-          });
-        };
-
-        const eventNames = [
-          "loaded",
-          "cleared",
-          "destroyed",
-          "resized",
-          "pointerdown",
-          "pointerup",
-          "viewChanged",
-          "message",
-        ];
-        eventNames.forEach(subscribe);
-      }
+      [
+        "loaded",
+        "cleared",
+        "destroyed",
+        "resized",
+        "pointerdown",
+        "pointerup",
+        "viewChanged",
+        "message",
+      ].forEach(subscribe);
     }
   }, [onLoaded]);
 
-  // Load DXF file and handle progress
   const loadDxfFile = async (url) => {
     setIsLoading(true);
     setError(null);
@@ -78,50 +97,37 @@ const DxfViewer = ({ dxfUrl, fonts = [], onLoaded }) => {
     }
   };
 
-  // Handle progress of DXF file loading
   const handleProgress = (phase, size, totalSize) => {
     if (phase !== progressText) {
-      switch (phase) {
-        case "font":
-          setProgressText("Fetching fonts...");
-          break;
-        case "fetch":
-          setProgressText("Fetching file...");
-          break;
-        case "parse":
-          setProgressText("Parsing file...");
-          break;
-        case "prepare":
-          setProgressText("Preparing rendering data...");
-          break;
-        default:
-          break;
-      }
+      const phaseTextMap = {
+        font: "Fetching fonts...",
+        fetch: "Fetching file...",
+        parse: "Parsing file...",
+        prepare: "Preparing rendering data...",
+      };
+      setProgressText(phaseTextMap[phase] || "");
     }
 
     if (totalSize === null) {
-      setProgress(-1); // Indeterminate progress
+      setProgress(-1);
     } else {
       setProgress(size / totalSize);
     }
   };
 
-  // Load the DXF file when component mounts or dxfUrl changes
   useEffect(() => {
     if (dxfUrl) {
       loadDxfFile(dxfUrl);
     }
   }, [dxfUrl]);
 
-  // Toggle visibility of a single layer
   const toggleLayer = (layer, newState) => {
     const viewer = dxfViewer.current;
-    viewer.ShowLayer(layer.name, newState); // Show or hide the layer
-    layer.isVisible = newState; // Update the layer state
-    setLayers([...layers]); // Force re-render with updated layers
+    viewer.ShowLayer(layer.name, newState);
+    layer.isVisible = newState;
+    setLayers([...layers]);
   };
 
-  // Toggle visibility of all layers
   const toggleAll = (newState) => {
     layers.forEach((layer) => {
       toggleLayer(layer, newState);
@@ -129,8 +135,12 @@ const DxfViewer = ({ dxfUrl, fonts = [], onLoaded }) => {
   };
 
   return (
-    <div style={{display:"flex",gap:"2rem"}}>
-      <div className="canvasContainer" ref={canvasContainerRef} style={{position:"fixed",top:0,left:0}}>
+    <div style={{ display: "flex", gap: "2rem" }}>
+      <div
+        className="canvasContainer"
+        ref={canvasContainerRef}
+        style={{ position: "fixed", top: 0, left: 0 }}
+      >
         {isLoading && <div className="loading">Loading...</div>}
         {progress !== null && (
           <div className="progress">
@@ -145,10 +155,13 @@ const DxfViewer = ({ dxfUrl, fonts = [], onLoaded }) => {
         )}
       </div>
 
-      {/* Layers List */}
       {layers.length > 0 && (
         <div className="layersContainer">
-          <LayersList layers={layers} toggleLayer={toggleLayer} toggleAll={toggleAll} />
+          <LayersList
+            layers={layers}
+            toggleLayer={toggleLayer}
+            toggleAll={toggleAll}
+          />
         </div>
       )}
     </div>
